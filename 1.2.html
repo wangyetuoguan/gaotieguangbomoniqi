@@ -1,0 +1,323 @@
+﻿<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <title>组合式文字/音频/视频定时播放</title>
+  <style>
+    body { font-family: sans-serif; padding: 20px; max-width: 1000px; margin: auto; }
+    textarea, input[type='time'], input[type='text'] { width: 100%; font-size: 16px; }
+    button, input, select { font-size: 16px; margin: 5px; padding: 5px 10px; }
+    .group { border: 2px solid #aaa; padding: 10px; margin-bottom: 15px; }
+    .group h3 { margin: 5px 0; }
+    .playlist, .video-entry { border: 1px solid #ccc; padding: 10px; margin-top: 10px; }
+    .time-bar { background: #f0f0f0; padding: 10px; margin: 10px 0; font-size: 18px; }
+    .countdown { color: #d00; font-weight: bold; }
+    .clear-button {
+      background-color: #fdd;
+      color: #c00;
+      font-weight: bold;
+      border: 1px solid #c00;
+      padding: 6px 12px;
+      margin-left: 10px;
+      cursor: pointer;
+      border-radius: 4px;
+    }
+    video { width: 100%; margin-top: 10px; }
+    /* 新增样式 */
+    .upload-section { margin-bottom: 15px; }
+    .upload-option { display: flex; align-items: center; margin: 5px 0; }
+    .upload-option input[type="radio"] { margin-right: 8px; }
+    .upload-option label { margin-right: 15px; }
+  </style>
+</head>
+<body>
+  <h2>📦 多组合文字/音频/视频定时播放系统</h2>
+
+  <div class="time-bar">
+    当前北京时间：<span id="currentTime">--:--</span> |
+    ⏯️ 总开关：<label><input type="checkbox" id="masterSwitch" checked> 启用</label>
+    <button class="clear-button" onclick="clearLocal()">🧹 清除记忆</button>
+  </div>
+
+  <div class="upload-section">
+    <h3>📁 上传选项</h3>
+    <div class="upload-option">
+      <input type="radio" name="audioUploadType" id="audioFolder" value="folder" checked>
+      <label for="audioFolder">上传音频文件夹</label>
+      <input type="radio" name="audioUploadType" id="audioSingle" value="single">
+      <label for="audioSingle">依次上传音频文件</label>
+    </div>
+    <div id="audioUploadContainer">
+      <input type="file" id="audioFiles" webkitdirectory multiple accept="audio/*">
+    </div>
+
+    <div class="upload-option" style="margin-top: 15px;">
+      <input type="radio" name="videoUploadType" id="videoFolder" value="folder" checked>
+      <label for="videoFolder">上传视频文件夹</label>
+      <input type="radio" name="videoUploadType" id="videoSingle" value="single">
+      <label for="videoSingle">依次上传视频文件</label>
+    </div>
+    <div id="videoUploadContainer">
+      <input type="file" id="videoFiles" webkitdirectory multiple accept="video/*">
+    </div>
+  </div>
+
+  <div>
+    <label>⏱️ 提前触发(ms):
+      <input type="number" id="triggerAdvance" value="200" min="0" max="2000" step="50">
+    </label>
+    <label>🔈 TTS语速:
+      <input type="range" id="rate" min="0.5" max="2" value="1" step="0.1">
+      <span id="rateVal">1</span>
+    </label>
+    <label>🎵 音调:
+      <input type="range" id="pitch" min="0.5" max="2" value="1" step="0.1">
+      <span id="pitchVal">1</span>
+    </label>
+    <label>🎧 音频倍速:
+      <input type="range" id="audioRate" min="0.5" max="2" value="1" step="0.1">
+      <span id="audioRateVal">1</span>
+    </label>
+  </div>
+
+  <button onclick="addGroup()">➕ 添加播放组合</button>
+  <div id="groups"></div>
+
+  <script>
+    const audioMap = {};
+    const videoMap = {};
+    let currentAudio = null;
+    let currentUtterance = null;
+    let pausedPlayback = false;
+
+    // 新增: 文件上传类型切换
+    function setupUploadToggle() {
+      // 音频上传切换
+      document.querySelectorAll('input[name="audioUploadType"]').forEach(radio => {
+        radio.addEventListener('change', function() {
+          const container = document.getElementById('audioUploadContainer');
+          container.innerHTML = '';
+          
+          if (this.value === 'folder') {
+            container.innerHTML = '<input type="file" id="audioFiles" webkitdirectory multiple accept="audio/*">';
+          } else {
+            container.innerHTML = '<input type="file" id="audioFiles" multiple accept="audio/*">';
+          }
+          
+          document.getElementById('audioFiles').addEventListener('change', handleAudioUpload);
+        });
+      });
+      
+      // 视频上传切换
+      document.querySelectorAll('input[name="videoUploadType"]').forEach(radio => {
+        radio.addEventListener('change', function() {
+          const container = document.getElementById('videoUploadContainer');
+          container.innerHTML = '';
+          
+          if (this.value === 'folder') {
+            container.innerHTML = '<input type="file" id="videoFiles" webkitdirectory multiple accept="video/*">';
+          } else {
+            container.innerHTML = '<input type="file" id="videoFiles" multiple accept="video/*">';
+          }
+          
+          document.getElementById('videoFiles').addEventListener('change', handleVideoUpload);
+        });
+      });
+    }
+    
+    // 新增: 处理音频上传
+    function handleAudioUpload(event) {
+      const files = event.target.files;
+      if (!files.length) return;
+      
+      for (const file of files) {
+        const name = file.name.replace(/\.[^/.]+$/, "");
+        audioMap[name] = URL.createObjectURL(file);
+      }
+      
+      alert("✅ 已加载音频文件：" + Object.keys(audioMap).join(", "));
+    }
+    
+    // 新增: 处理视频上传
+    function handleVideoUpload(event) {
+      const files = event.target.files;
+      if (!files.length) return;
+      
+      for (const file of files) {
+        const name = file.name.replace(/\.[^/.]+$/, "");
+        videoMap[name] = URL.createObjectURL(file);
+      }
+      
+      alert("✅ 已加载视频文件：" + Object.keys(videoMap).join(", "));
+    }
+
+    // 初始化上传事件监听
+    document.getElementById('audioFiles').addEventListener('change', handleAudioUpload);
+    document.getElementById('videoFiles').addEventListener('change', handleVideoUpload);
+    
+    // 初始化上传类型切换
+    setupUploadToggle();
+
+    function updateTimeDisplay() {
+      const now = new Date();
+      const beijingOffset = now.getTimezoneOffset() === -480 ? 0 : (480 + now.getTimezoneOffset());
+      now.setMinutes(now.getMinutes() + beijingOffset);
+      document.getElementById('currentTime').innerText = now.toTimeString().slice(0, 5);
+    }
+    setInterval(updateTimeDisplay, 1000);
+    updateTimeDisplay();
+
+    document.getElementById('rate').oninput = e => document.getElementById('rateVal').innerText = e.target.value;
+    document.getElementById('pitch').oninput = e => document.getElementById('pitchVal').innerText = e.target.value;
+    document.getElementById('audioRate').oninput = e => document.getElementById('audioRateVal').innerText = e.target.value;
+
+    function addGroup(data = {}) {
+      const div = document.createElement('div');
+      div.className = 'group';
+      div.innerHTML = `
+        <h3>📁 组合名称：<input type="text" value="${data.name || '新组合'}" class="groupName"></h3>
+        <button onclick="addPlaylist(this)">➕ 添加播放列表</button>
+        <div class="group-playlists"></div>
+      `;
+      document.getElementById('groups').appendChild(div);
+    }
+
+    function addPlaylist(button) {
+      const container = button.closest('.group');
+      const listDiv = document.createElement('div');
+      listDiv.className = 'playlist';
+      listDiv.innerHTML = `
+        <label>定时启动时间：
+          <input type="time" class="startTime">
+        </label><br>
+        <textarea class="playlistText" rows="4" placeholder="输入播放内容..."></textarea><br>
+        <div>⏳ 倒计时：<span class="countdown">未设置</span></div>
+        <button onclick="startPlaylist(this)">▶️ 播放</button>
+        <button onclick="pausePlayback()">⏸️ 暂停</button>
+        <button onclick="resumePlayback()">⏵️ 继续</button>
+        <button onclick="cancelPlayback()">⏹️ 停止</button>
+      `;
+      container.querySelector('.group-playlists').appendChild(listDiv);
+    }
+
+    function startPlaylist(button) {
+      const container = button.closest('.playlist');
+      const text = container.querySelector('.playlistText').value.trim();
+      if (!text) return;
+      const keywords = Object.keys(audioMap);
+      const segments = splitTextByKeywords(text, keywords);
+      playSegmentsSequentially(segments);
+    }
+
+    function splitTextByKeywords(text, keywords) {
+      const pattern = new RegExp("(" + keywords.map(k => k.replace(/[-/\^$*+?.()|[\]{}]/g, '\$&')).join("|") + ")", "g");
+      return text.split(pattern).filter(s => s.trim() !== "");
+    }
+
+    async function playSegmentsSequentially(segments) {
+      pausedPlayback = false;
+      for (let i = 0; i < segments.length; i++) {
+        if (pausedPlayback) break;
+        const segment = segments[i];
+        if (audioMap[segment]) {
+          await playAudioSegmentFlexible(audioMap[segment]);
+        } else {
+          await speakSegment(segment);
+        }
+      }
+    }
+
+    function playAudioSegmentFlexible(audioUrl) {
+      return new Promise(resolve => {
+        const rate = parseFloat(document.getElementById("audioRate").value);
+        const advanceMs = parseInt(document.getElementById("triggerAdvance").value);
+        const audio = new Audio(audioUrl);
+        audio.playbackRate = rate;
+        audio.volume = 1.0;
+        currentAudio = audio;
+        audio.onloadedmetadata = () => {
+          const duration = audio.duration / rate;
+          const triggerTime = Math.max(0, duration - advanceMs / 1000);
+          setTimeout(() => resolve(), triggerTime * 1000);
+        };
+        audio.oncanplaythrough = () => audio.play();
+      });
+    }
+
+    function speakSegment(text) {
+      return new Promise(resolve => {
+        const rate = parseFloat(document.getElementById("rate").value);
+        const pitch = parseFloat(document.getElementById("pitch").value);
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = 'zh-CN';
+        utterance.rate = rate;
+        utterance.pitch = pitch;
+        utterance.onend = () => {
+          currentUtterance = null;
+          resolve();
+        };
+        currentUtterance = utterance;
+        speechSynthesis.speak(utterance);
+      });
+    }
+
+    function pausePlayback() {
+      pausedPlayback = true;
+      if (currentAudio) currentAudio.pause();
+      if (speechSynthesis.speaking) speechSynthesis.pause();
+    }
+
+    function resumePlayback() {
+      pausedPlayback = false;
+      if (currentAudio) currentAudio.play();
+      if (speechSynthesis.paused) speechSynthesis.resume();
+    }
+
+    function cancelPlayback() {
+      pausedPlayback = true;
+      if (currentAudio) {
+        currentAudio.pause();
+        currentAudio = null;
+      }
+      speechSynthesis.cancel();
+    }
+
+    function checkScheduledPlaylists() {
+      const master = document.getElementById('masterSwitch').checked;
+      if (!master) return;
+      const now = new Date();
+      const offsetMin = now.getTimezoneOffset();
+      const beijingNow = new Date(now.getTime() + (offsetMin + 480) * 60000);
+      const nowStr = beijingNow.toTimeString().slice(0,5);
+
+      document.querySelectorAll('.playlist').forEach(div => {
+        const startTime = div.querySelector('.startTime').value;
+        const countdownDisplay = div.querySelector('.countdown');
+        if (startTime) {
+          const target = new Date(beijingNow.toDateString() + ' ' + startTime);
+          const diff = target - beijingNow;
+          if (diff > 0) {
+            const min = Math.floor(diff / 60000);
+            const sec = Math.floor((diff % 60000) / 1000);
+            countdownDisplay.innerText = `${min}分${sec}秒`;
+          } else if (!div.dataset.started && startTime === nowStr) {
+            div.dataset.started = "true";
+            countdownDisplay.innerText = "播放中...";
+            div.querySelector("button").click();
+          }
+        } else {
+          countdownDisplay.innerText = "未设置";
+        }
+      });
+    }
+
+    function clearLocal() {
+      localStorage.removeItem("tts_playlists");
+      alert("🧹 已清除保存内容，下次打开将恢复初始状态！");
+      location.reload();
+    }
+
+    setInterval(checkScheduledPlaylists, 1000);
+  </script>
+</body>
+</html>
